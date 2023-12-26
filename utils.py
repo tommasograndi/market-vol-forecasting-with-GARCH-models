@@ -68,3 +68,71 @@ def evaluate(models : dict, realized):
 
     return results_df
 
+# News impact curve
+def NIC(model, name : str):
+
+    vols = model.conditional_volatility.dropna() #sigma_t
+    epsi = model.resid.shift(1).dropna() #shift so we get epsilon_t-1
+
+    merge = pd.merge(vols, epsi, left_index=True, right_index=True, how='inner')
+
+    merge['epsi_squared'] = merge.iloc[:,1]**2
+    
+    ## GARCH(1,1)
+    if name == 'GARCH': 
+        omega = model.params[2] #constant term
+        alpha = model.params[3]
+        unco_var = omega / (1 + alpha) #unconditional variance
+        beta = model.params[4]
+        A = omega + beta * unco_var
+
+        merge['ht'] = A + (alpha * merge['epsi_squared'])
+        plt.title('News Impact Curve for GARCH(1,1)')
+
+
+    ## GJR-GARCH(1,1)
+    elif name == 'GJR':
+
+        omega = model.params[2] #constant term
+        alpha = model.params[3]
+        unco_var = omega / (1 + alpha) #unconditional variance
+        beta = model.params[5]
+        gamma = model.params[4]
+        A = omega + beta * unco_var
+
+        def gjr(value):
+            if value > 0:
+                return (A + alpha * (value**2))
+            elif value < 0:
+                return (A + (alpha + gamma) * (value**2))
+
+        # Apply the function to create the ht column
+        merge['ht'] = merge.iloc[:,1].apply(gjr)
+
+        plt.title('News Impact Curve for GJR-GARCH')
+    
+    elif name == 'EGARCH':
+        omega = model.params[2] #constant term
+        alpha = model.params[3]
+        unco_var = omega / (1 + alpha) #unconditional variance
+        unco_vol = np.sqrt(unco_var)
+        beta = model.params[5]
+        gamma = model.params[4]
+
+        A = (unco_vol**(2*beta))*np.exp(omega - (alpha * np.sqrt(2 / np.pi)))
+
+        def egarch(value):
+            if value > 0:
+                return (A * np.exp((gamma + alpha)/unco_vol * value))
+            elif value < 0:
+                return (A * np.exp((gamma - alpha)/unco_vol * value))
+
+        # Apply the function to create the ht column
+        merge['ht'] = merge.iloc[:,1].apply(egarch)
+    
+
+    merge.sort_values(by='resid', inplace=True)
+    plt.plot(merge.iloc[:,1].values, merge['ht'].values)
+    plt.xlabel('$\epsilon_{t-1}$')
+    plt.ylabel('$\sigma^2$')
+
