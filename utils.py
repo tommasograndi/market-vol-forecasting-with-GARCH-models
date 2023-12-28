@@ -11,11 +11,6 @@ def realized_VOL(series):
 
     return vol
 
-def realized_vol(series):
-    vol = pd.Series(series.rolling(window=22).std().shift(-21))
-
-    return vol
-
 def rolling_vol(series, window, variance=False):
 
     vol = pd.Series(series.rolling(window = window).std(), index = series.index)
