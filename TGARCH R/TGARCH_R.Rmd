@@ -1,0 +1,303 @@
+---
+title: "Market Volatility Forecasting using GARCH models - TGARCH"
+author: "Tommaso Grandi"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+<br> <br>
+
+#### Load and manipulate data exported from Python notebook
+```{r}
+library(readr)
+library(xts)
+
+returns <- read_csv("returns.csv", show_col_types = FALSE)
+returns$Date <- as.Date(returns$Date, format = "%d/%m/%Y")
+colnames(returns) = c('Date', 'Returns')
+data = data.frame(returns)
+
+ret = xts(data$Returns, order.by = data$Date)
+head(ret)
+```
+
+```{r}
+## LOAD REALIZED VOL
+
+realized <- read_csv("realized.csv", show_col_types = FALSE)
+realized$Date <- as.Date(realized$Date, format = "%d/%m/%Y")
+colnames(realized) = c('Date', 'Volatility')
+data_vol = data.frame(realized)
+
+vol = xts(data_vol$Volatility, order.by = data_vol$Date)
+head(vol)
+
+```
+
+```{r}
+tail(ret)
+```
+```{r}
+tail(vol)
+```
+The two series ends at different dates, let's cut the return series. 
+```{r}
+# extract last date of vol as char
+last = as.character(index(vol)[length(vol)])
+last = gsub('-', '', last)
+
+# extract first date as char
+begin = as.character(index(vol)[1])
+begin = gsub('-', '', begin)
+
+# paste the two chars
+cut = paste(begin, last, sep = '/')
+
+# Cut ret so that they end in the same day of vol
+ret <- ret[cut]
+tail(ret)
+
+```
+
+```{r}
+plot(ret, main = "Returns", type = "l")
+```
+
+
+#### Load the necessary libraries
+```{r}
+library('PerformanceAnalytics')
+library('rugarch')
+library('urca')
+
+```
+
+
+## TGARCH
+
+The Threshold GARCH was developed by Zakoian in 1994 and is similar to GJR GARCH. The main difference is that specification is on conditional standard deviation instead on the conditional variance.
+
+For a TGARCH(1,1), the variance process become:
+
+$$\sigma_t =  \omega + \alpha_1^+\epsilon^+_{t-1} - \alpha_1^-\epsilon^-_{t-1} + \beta_1^+\sigma^+_{t-1} - \beta_1^-\sigma^-_{t-1}$$
+
+where  $\epsilon^+_{t-1} = \epsilon_{t-1}$ if $\epsilon_{t-1}>0$, and $\epsilon^+_{t-1} = 0$ if $\epsilon_{t-1}\le 0$. Likewise $\epsilon^-_{t-1} = \epsilon_{t-1}$ if $\epsilon_{t-1}\le0$, and $\epsilon^-_{t-1} = 0$ if $\epsilon_{t-1} > 0$. 
+This allows to have different estimated parameters for positive ($\alpha^+_1, \beta^+_1$) and negative ($\alpha^-_1, \beta^-_1$) news shocks and past conditional volatilities that evidently will have a diversified effect on the actual conditional volatility, helping to capture the asymmetry in the market. 
+
+
+Let's specify a TGARCH(1,1) model with a skewed t-distribution for the residuals. 
+
+```{r}
+### TGARCH Model Specification
+# As before, model specification is:
+# - AR(1) for the mean process
+# - (1,1) for the variance process (in this case a TGARCH)
+# - skewed t distribution for the residuals (shape + skew parameters)
+
+spec = ugarchspec(
+  variance.model = list(
+    model = "fGARCH", garchOrder = c(1, 1), #fGARCH=familyGARCH
+                        submodel = "TGARCH",  
+                        variance.targeting = FALSE),
+    mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+    distribution.model = "sstd" #skewed t dist
+  )
+
+print(spec)
+```
+
+
+```{r}
+### TGARCH Model
+tgarch.fit = ugarchfit(spec, ret)
+```
+
+```{r}
+# Examine the coefficients
+tgarch.fit@fit$matcoef
+```
+Comments: all coefficients are significant (expect for mu).
+
+```{r}
+plot(sigma(tgarch.fit), main='Conditional Volatility')
+```
+
+
+```{r}
+print(infocriteria(tgarch.fit))
+```
+Comments : Values appeared to be on different scale than ICs calculated in 
+Python.
+
+Let's look at the news impact curve:
+<br>
+```{r}
+NIC <- newsimpact(z= NULL, tgarch.fit)
+
+plot(x = NIC$zx, y = NIC$zy, ylab = NIC$yexpr, xlab = NIC$xexpr, type = "l", 
+     main = "News Impact Curve - TGARCH(1,1)")
+```
+
+Comments: left part of the curve is less steep than GJR NIC and GARCH NIC.
+<br> <br>
+
+## Model Validation for the fitted data (In-Sample)
+
+As before we want to validate the model error measures in the in sample prediction as well as the information criterias. 
+
+
+```{r}
+
+# Create the evaluate function
+
+evaluate <- function(model, realized_vol) {
+  
+  mse <- mean((sigma(model) - realized_vol)^2)
+  mae <- mean(abs(sigma(model) - realized_vol))
+  
+  IC <- infocriteria(model)[1:2, 1]
+    
+  
+  return(c(mse, mae, IC))
+  
+} 
+
+```
+
+
+```{r}
+# test the function on the TGARCH
+evaluate(tgarch.fit, vol)
+
+```
+
+Information Criterias appear to be on a different scale than those in Python, let's recreate all the models we had in Python in order to compare the TGARCH
+with the previous models. 
+
+```{r}
+# BASIC GARCH
+garch.fit <- ugarchfit(
+  ugarchspec(
+    variance.model = list(model = "sGARCH", 
+                        garchOrder = c(1, 1),
+                        submodel = NULL,  
+                        variance.targeting = FALSE),
+    mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+    distribution.model = "sstd" #skewed t dist
+  ), 
+                       ret)
+
+# EGARCH
+egarch.fit <- ugarchfit(
+  ugarchspec(
+    variance.model = list(model = "eGARCH", garchOrder = c(1, 1),
+                        submodel = NULL,  
+                        variance.targeting = FALSE),
+    mean.model = list(armaOrder = c(1, 0), include.mean = TRUE
+                      ), 
+    distribution.model = "sstd" #skewed t dist
+  ), 
+                       ret)
+
+# GJR GARCH
+gjrgarch.fit <- ugarchfit(
+  ugarchspec(
+    variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1),
+                        submodel = NULL,  
+                        variance.targeting = FALSE),
+    mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+    distribution.model = "sstd" #skewed t dist
+  ), 
+                       ret)
+
+
+```
+
+
+Compare models News Impact Curves:
+```{r}
+nic_egarch = newsimpact(z= NULL, egarch.fit)
+nic_gjr = newsimpact(z= NULL, gjrgarch.fit)
+
+legend <- c("TGARCH","EGARCH","GJR-GARCH")
+col  <- c("black", "red", "blue")
+
+plot(x = NIC$zx, y = NIC$zy, ylab = NIC$yexpr, xlab = NIC$xexpr, type = "l", main = "News Impact Curve", col = col[1], lwd=2)
+
+lines(x = nic_egarch$zx, y = nic_egarch$zy, lwd = 2, col = col[2])
+lines(x = nic_gjr$zx, y = nic_gjr$zy, lwd = 2, col = col[3])
+
+legend(x = "topright", y = NULL, legend = legend, 
+       text.col = col)
+
+```
+
+TGARCH left-side of the curve has the smaller steepness, while EGARCH is more 
+steep and GJR has the biggest steepness. 
+This means that GJR conditional variance reacts with more emphasis to negative
+variation in the past residuals (is the more sensitive model with respect to
+bad news) whereas TGARCH is the less sensitive model to bad news. 
+Another observation is that the positive side of the GJR NIC curve has a more 
+positive slope compared to the other two. This means that the conditional 
+variance is more sensitive to positive variation in the past good news. 
+<br> 
+
+```{r}
+## CREATE DATAFRAME TO STORE THE STATISTICS
+
+eval = data.frame()
+
+eval = rbind(eval, evaluate(garch.fit, vol))
+eval = rbind(eval, evaluate(egarch.fit, vol))
+eval = rbind(eval, evaluate(gjrgarch.fit, vol))
+eval = rbind(eval, evaluate(tgarch.fit, vol))
+
+
+colnames(eval) = c('MSE', 'MAE', 'AIC', 'BIC')
+row.names(eval) = c('GARCH', 'EGARCH', 'GJR-GARCH', 'TGARCH')
+
+eval
+```
+<br>
+As before, EGARCH is overall the best model on the fitted data in terms of both Information Criterias and Error measures. TGARCH is the second best model and even surpassed EGARCH in the information criterias results. 
+
+These two models should be those to be used in the out of sample forecast of the volatility. 
+
+But what if we really want to choose a winner?
+
+
+### Diebold Mariano Test
+
+We can use a very specific statistical test that measure the statistical difference between the prediction of two models.
+
+This test is capable of comparing the predictive accuracy between two models and hence test if two models have a statistical difference in their prediction.
+<br> <br>
+
+##### GARCH vs TGARCH
+```{r}
+
+library(forecast)
+
+# GARCH VS TGARCH
+dm.test(e1 = sigma(garch.fit), e2 = sigma(tgarch.fit), h = 1, power = 1, alternative='greater')
+```
+We reject the null, hence the second method (TGARCH) is more accurate than method 1 (GARCH). 
+<br> <br>
+
+##### EGARCH vs TGARCH
+```{r}
+
+# EGARCH vs TGARCH
+dm.test(e1 = sigma(egarch.fit), e2 = sigma(tgarch.fit), h = 1, power = 1, alternative='less')
+
+```
+In this case we used as the alternative hypotheses 'less' so the alternative is that TGARCH is less accurate than EGARCH. We reject the null, hence the second method (TGARCH) has less accuracy than method 1 (EGARCH). 
+This confirms our conclusion from the model evaluation statistics and hence
+crowns the EGARCH as the best suitable model for this data. Let's go 
+back to the Python Notebook to test EGARCH in out of sample prediction. 
+
+<br>
+<br>
+<br>
+
+
