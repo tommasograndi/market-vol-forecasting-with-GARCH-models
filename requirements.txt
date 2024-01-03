@@ -4,3 +4,5 @@ yfinance
 arch
 matplotlib
 seaborn
+sklearn
+statsmodels
