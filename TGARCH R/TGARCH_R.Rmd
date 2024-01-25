@@ -75,7 +75,9 @@ library('urca')
 
 ## TGARCH
 
-The Threshold GARCH was developed by Zakoian in 1994 and is similar to GJR GARCH. The main difference is that specification is on conditional standard deviation instead on the conditional variance.
+The Threshold GARCH was developed by Zakoian in 1994 and is similar to GJR GARCH. 
+The main difference is that specification is on conditional standard deviation 
+instead on the conditional variance.
 
 For a TGARCH(1,1), the variance process become:
 
@@ -281,7 +283,7 @@ library(forecast)
 # GARCH VS TGARCH
 dm.test(e1 = sigma(garch.fit), e2 = sigma(tgarch.fit), h = 1, power = 1, alternative='greater')
 ```
-We reject the null, hence the second method (TGARCH) is more accurate than method 1 (GARCH). 
+For this first DM test comparing GARCH and TGARCH, we set the alternative hypotheses as the second model, the TGARCH, having a greater predictive accuracy than the first model, the GARCH. We reject the null, hence the second method (TGARCH) is more accurate than method 1 (GARCH). 
 <br> <br>
 
 ##### EGARCH vs TGARCH
@@ -294,7 +296,7 @@ dm.test(e1 = sigma(egarch.fit), e2 = sigma(tgarch.fit), h = 1, power = 1, altern
 In this case we used as the alternative hypotheses 'less' so the alternative is that TGARCH is less accurate than EGARCH. We reject the null, hence the second method (TGARCH) has less accuracy than method 1 (EGARCH). 
 This confirms our conclusion from the model evaluation statistics and hence
 crowns the EGARCH as the best suitable model for this data. Let's go 
-back to the Python Notebook to test EGARCH in out of sample prediction. 
+back to the Python Notebook.
 
 <br>
 <br>
